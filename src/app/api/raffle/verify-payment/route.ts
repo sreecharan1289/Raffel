@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '../../../../../lib/prisma'
+import connectDB from '../../../../../lib/mongodb'
+import { Entry, PaymentLog } from '../../../../../lib/models'
 import { verifyRazorpaySignature } from '../../../../../lib/razorpay'
 import { paymentVerificationSchema } from '../../../../../lib/validation'
-import { logPaymentEvent } from '../../../../../lib/payment-logger'
 
 export async function POST(request: NextRequest) {
   try {
+    await connectDB()
+    
     const body = await request.json()
     
     // Validate input
@@ -26,10 +28,8 @@ export async function POST(request: NextRequest) {
     }
     
     // Find all entries for this order (multiple entries support)
-    const entries = await prisma.entry.findMany({
-      where: { razorpayOrderId: validatedData.razorpay_order_id },
-      include: { user: true }
-    })
+    const entries = await Entry.find({ razorpayOrderId: validatedData.razorpay_order_id })
+      .populate('userId')
     
     if (!entries || entries.length === 0) {
       return NextResponse.json(
@@ -39,26 +39,23 @@ export async function POST(request: NextRequest) {
     }
     
     // Update all entries status
-    const updatedEntries = await prisma.entry.updateMany({
-      where: { razorpayOrderId: validatedData.razorpay_order_id },
-      data: {
+    await Entry.updateMany(
+      { razorpayOrderId: validatedData.razorpay_order_id },
+      {
         status: 'CONFIRMED',
         paymentId: validatedData.razorpay_payment_id
       }
-    })
+    )
     
     // Get the updated entries with user data
-    const confirmedEntries = await prisma.entry.findMany({
-      where: { razorpayOrderId: validatedData.razorpay_order_id },
-      include: { user: true }
-    })
+    const confirmedEntries = await Entry.find({ razorpayOrderId: validatedData.razorpay_order_id })
+      .populate('userId')
     
     // Log payment verification for each entry
     for (const entry of confirmedEntries) {
-      await logPaymentEvent({
-        entryId: entry.id,
+      await PaymentLog.create({
+        entryId: entry._id,
         razorpayOrderId: validatedData.razorpay_order_id,
-        razorpayPaymentId: validatedData.razorpay_payment_id,
         amount: entry.amount,
         status: 'SUCCESS',
         gatewayResponse: {
@@ -79,12 +76,12 @@ export async function POST(request: NextRequest) {
       tokens: tokens,
       numberOfEntries: numberOfEntries,
       entries: confirmedEntries.map(entry => ({
-        id: entry.id,
+        id: entry._id.toString(),
         token: entry.token,
         entryNumber: entry.entryNumber,
         user: {
-          name: entry.user.name,
-          email: entry.user.email
+          name: entry.userId.name,
+          email: entry.userId.email
         }
       }))
     })

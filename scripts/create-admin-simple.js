@@ -1,12 +1,32 @@
-const { PrismaClient } = require('@prisma/client');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
-const prisma = new PrismaClient();
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI
+
+if (!MONGODB_URI) {
+  console.error('❌ MONGODB_URI environment variable is required')
+  process.exit(1)
+}
+
+// Admin Schema
+const adminSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  isActive: { type: Boolean, default: true },
+}, { timestamps: true })
+
+// Create Admin model
+const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema)
 
 async function createAdmin() {
     try {
         console.log('🔧 Creating secure admin user...');
+
+        // Connect to MongoDB
+        await mongoose.connect(MONGODB_URI);
+        console.log('✅ Connected to MongoDB');
 
         // Get credentials from command line arguments
         const username = process.argv[2];
@@ -29,9 +49,7 @@ async function createAdmin() {
         }
 
         // Check if admin already exists
-        const existingAdmin = await prisma.admin.findUnique({
-            where: { username }
-        });
+        const existingAdmin = await Admin.findOne({ username });
 
         if (existingAdmin) {
             console.log('✅ Admin user already exists:', username);
@@ -42,22 +60,21 @@ async function createAdmin() {
         const hashedPassword = await bcrypt.hash(password, 12);
 
         // Create admin
-        const admin = await prisma.admin.create({
-            data: {
-                username,
-                password: hashedPassword
-            }
+        const admin = await Admin.create({
+            username,
+            password: hashedPassword,
+            isActive: true
         });
 
         console.log('✅ Admin user created successfully!');
         console.log('Username:', username);
-        console.log('Admin ID:', admin.id);
+        console.log('Admin ID:', admin._id);
         console.log('⚠️  Store credentials securely - they are not saved in .env');
 
     } catch (error) {
         console.error('❌ Error creating admin:', error.message);
     } finally {
-        await prisma.$disconnect();
+        await mongoose.disconnect();
     }
 }
 
